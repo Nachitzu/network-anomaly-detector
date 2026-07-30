@@ -53,3 +53,15 @@ scaler:
   # (benign-only) set only, then applied to the test set.
   with_mean: true
   with_std: true
+
+models:
+  isolation_forest:
+    # sklearn.ensemble.IsolationForest hyperparameters. Trained on the
+    # benign-only training set only (see src/models/isolation_forest_model.py).
+    n_estimators: 100
+    # Expected proportion of anomalies in the *test* traffic mix, used by
+    # sklearn to set the internal score offset. A conservative estimate for
+    # CICIDS2017-style traffic; not derived from labels at training time.
+    contamination: 0.1
+    max_samples: auto
+    random_state: 42
