@@ -55,18 +55,39 @@ class CleaningConfig(BaseModel):
     invalid_values: str = "drop"
 
 
+class IsolationForestConfig(BaseModel):
+    """`models.isolation_forest` section: `sklearn.ensemble.IsolationForest`
+    hyperparameters, sourced from config.yaml rather than hardcoded (README
+    section 5.2).
+    """
+
+    n_estimators: int = Field(default=100, gt=0)
+    # sklearn requires 0 < contamination <= 0.5; fail fast on a bad config value
+    # rather than deep inside IsolationForest.fit().
+    contamination: float = Field(default=0.1, gt=0, le=0.5)
+    max_samples: int | float | str = "auto"
+    random_state: int = DEFAULT_RANDOM_STATE
+
+
+class ModelsConfig(BaseModel):
+    """`models` section: hyperparameters for each `BaseDetector` implementation."""
+
+    isolation_forest: IsolationForestConfig = Field(default_factory=IsolationForestConfig)
+
+
 class Config(BaseModel):
     """Typed, validated view of config.yaml.
 
     Centralizes every default in one place (fail-fast on malformed input) so
     downstream functions never re-declare `.get()` fallbacks. Unknown top-level
-    keys (e.g. `data`, future model hyperparameters) are ignored here.
+    keys (e.g. `data`) are ignored here.
     """
 
     features: FeaturesConfig
     split: SplitConfig = Field(default_factory=SplitConfig)
     scaler: ScalerConfig = Field(default_factory=ScalerConfig)
     cleaning: CleaningConfig = Field(default_factory=CleaningConfig)
+    models: ModelsConfig = Field(default_factory=ModelsConfig)
 
 
 def load_config(config_path: str | Path) -> dict[str, Any]:
