@@ -1,0 +1,33 @@
+[project]
+name = "network-anomaly-detector"
+version = "0.1.0"
+description = "ML-based network anomaly detection: Isolation Forest vs. Autoencoder on CICIDS2017 flow data."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "scikit-learn>=1.4",
+    "pandas>=2.1",
+    "pydantic>=2.5",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+]
+# Declared for later roadmap phases (Autoencoder + comparison plots).
+# Not required to install or import for Phase 1 (data & feature engineering).
+models = [
+    "torch>=2.2",
+    "matplotlib>=3.8",
+    "seaborn>=0.13",
+]
+
+# This repository is not published as an installable distribution; `uv sync`
+# should only manage the dependency environment, not build/install a package.
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
