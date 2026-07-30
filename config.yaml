@@ -1,0 +1,55 @@
+# Single source of truth for dataset paths, feature selection and scaler
+# parameters. No feature lists or paths should be hardcoded in Python.
+
+data:
+  # Full CICIDS2017 CSVs (git-ignored). Populated locally by the user, never committed.
+  raw_dir: data/raw
+  # Small, reproducible, class-balanced subset committed to the repo for tests/demos.
+  samples_dir: data/samples
+  csv_glob: "*.csv"
+
+features:
+  # Numeric CICFlowMeter flow features used for anomaly detection.
+  numeric_columns:
+    - "Flow Duration"
+    - "Total Fwd Packets"
+    - "Total Backward Packets"
+    - "Total Length of Fwd Packets"
+    - "Total Length of Bwd Packets"
+    - "Fwd Packet Length Max"
+    - "Fwd Packet Length Mean"
+    - "Bwd Packet Length Max"
+    - "Bwd Packet Length Mean"
+    - "Flow Bytes/s"
+    - "Flow Packets/s"
+    - "Flow IAT Mean"
+    - "Fwd IAT Mean"
+    - "Bwd IAT Mean"
+    - "SYN Flag Count"
+    - "ACK Flag Count"
+    - "Average Packet Size"
+  # Ground-truth label column. Used ONLY to build the mixed test set / for
+  # evaluation. Must never appear in `numeric_columns`.
+  label_column: "Label"
+  # Exact label value identifying normal traffic in CICIDS2017.
+  benign_label: "BENIGN"
+
+split:
+  # Fraction of BENIGN rows held out into the mixed test set (all attack rows
+  # always go to the test set; only BENIGN rows are ever used for training).
+  test_size: 0.3
+  random_state: 42
+
+cleaning:
+  # CICIDS2017 contains non-finite values (Infinity / NaN) in rate columns such
+  # as "Flow Bytes/s" and "Flow Packets/s" for zero-duration flows. StandardScaler
+  # cannot fit or transform non-finite input, so rows with a non-finite value in
+  # any selected feature column are handled here before the train/test split.
+  # Strategy: "drop" — discard those rows (the only supported strategy in v1).
+  invalid_values: drop
+
+scaler:
+  # sklearn.preprocessing.StandardScaler params. Fit on the training
+  # (benign-only) set only, then applied to the test set.
+  with_mean: true
+  with_std: true

@@ -1,0 +1,3 @@
+Destination Port,Flow Duration,Total Fwd Packets,Total Backward Packets,Total Length of Fwd Packets,Total Length of Bwd Packets,Fwd Packet Length Max,Fwd Packet Length Mean,Bwd Packet Length Max,Bwd Packet Length Mean,Flow Bytes/s,Flow Packets/s,Flow IAT Mean,Fwd IAT Mean,Bwd IAT Mean,SYN Flag Count,ACK Flag Count,Average Packet Size,Label
+21,50,60,0,1800,0,30,30.0,0,0.0,36000.0,1200.0,1.0,1.0,0.0,60,0,30.0,DoS Hulk
+22,45,55,0,1650,0,30,30.0,0,0.0,36666.0,1222.0,0.9,0.9,0.0,55,0,30.0,DoS Hulk
