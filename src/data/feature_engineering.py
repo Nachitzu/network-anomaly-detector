@@ -16,7 +16,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 
@@ -69,10 +69,41 @@ class IsolationForestConfig(BaseModel):
     random_state: int = DEFAULT_RANDOM_STATE
 
 
+class AutoencoderConfig(BaseModel):
+    """`models.autoencoder` section: the PyTorch feedforward encoder-decoder's
+    hyperparameters, sourced from config.yaml rather than hardcoded (README
+    section 5.3).
+    """
+
+    # Encoder hidden layer widths, e.g. [32, 16, 8]; the decoder mirrors these
+    # in reverse. The input/output layer width is `input_dim`, inferred at fit
+    # time from the training data rather than duplicated here.
+    hidden_dims: list[int] = Field(default_factory=lambda: [32, 16, 8])
+    epochs: int = Field(default=50, gt=0)
+    learning_rate: float = Field(default=1e-3, gt=0)
+    batch_size: int = Field(default=8, gt=0)
+    # Percentile of held-out BENIGN validation reconstruction error used as the
+    # anomaly threshold -- NEVER computed from attack data (README section 5.3).
+    threshold_percentile: float = Field(default=95.0, gt=0, lt=100)
+    # Fraction of the benign training set held out to fit the threshold.
+    validation_fraction: float = Field(default=0.2, gt=0, lt=1)
+    random_state: int = DEFAULT_RANDOM_STATE
+
+    @field_validator("hidden_dims")
+    @classmethod
+    def _hidden_dims_positive_and_non_empty(cls, v: list[int]) -> list[int]:
+        """Reject empty layers or non-positive widths, which would otherwise
+        produce a cryptic optimizer error or a silently degenerate model."""
+        if not v or any(dim <= 0 for dim in v):
+            raise ValueError("hidden_dims must be a non-empty list of positive ints")
+        return v
+
+
 class ModelsConfig(BaseModel):
     """`models` section: hyperparameters for each `BaseDetector` implementation."""
 
     isolation_forest: IsolationForestConfig = Field(default_factory=IsolationForestConfig)
+    autoencoder: AutoencoderConfig = Field(default_factory=AutoencoderConfig)
 
 
 class Config(BaseModel):

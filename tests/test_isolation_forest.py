@@ -231,8 +231,9 @@ def test_top_contributing_features_ranks_the_most_extreme_feature_first(
     feature_names = prepared.feature_names
     extreme_idx = feature_names.index("Flow Packets/s")
     # Start exactly at the training mean (z-score 0 everywhere), then make
-    # one feature obviously extreme.
-    x = detector._train_mean.copy()
+    # one feature obviously extreme. Use the public training data the test
+    # owns rather than the detector's private mean.
+    x = prepared.x_train.mean(axis=0)
     x[extreme_idx] += 1000.0
 
     top = detector.top_contributing_features(x, feature_names, k=3)

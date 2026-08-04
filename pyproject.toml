@@ -20,8 +20,8 @@ dev = [
     "pandas-stubs",
     "types-PyYAML",
 ]
-# Declared for later roadmap phases (Autoencoder + comparison plots).
-# Not required to install or import for Phase 1 (data & feature engineering).
+# Required from Phase 3 onward (Autoencoder + comparison plots). Not required
+# to install or import for Phases 1-2 (data pipeline, Isolation Forest).
 models = [
     "torch>=2.2",
     "matplotlib>=3.8",
