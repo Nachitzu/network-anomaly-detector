@@ -24,6 +24,7 @@ from src.data.feature_engineering import (
     PreparedData,
     fit_scaler,
     load_config,
+    normalize_labels,
     prepare_dataset,
     required_columns,
     sanitize_flows,
@@ -228,6 +229,59 @@ def test_sanitize_flows_does_not_mutate_input(sample_df: pd.DataFrame) -> None:
     sanitize_flows(dirty, FEATURE_COLUMNS)
 
     pd.testing.assert_frame_equal(dirty, before)
+
+
+# --- normalize_labels ------------------------------------------------------
+
+
+def test_normalize_labels_repairs_the_mangled_web_attack_separator() -> None:
+    """CICIDS2017's cp1252 en dash arrives as U+FFFD in UTF-8 copies."""
+    labels = pd.Series(
+        ["Web Attack � Brute Force", "Web Attack � XSS", "Web Attack � Sql Injection"]
+    )
+
+    normalized = normalize_labels(labels)
+
+    assert list(normalized) == [
+        "Web Attack - Brute Force",
+        "Web Attack - XSS",
+        "Web Attack - Sql Injection",
+    ]
+    assert not any("�" in label for label in normalized)
+
+
+def test_normalize_labels_leaves_clean_labels_untouched() -> None:
+    labels = pd.Series(["BENIGN", "DoS Hulk", "PortScan"])
+
+    assert list(normalize_labels(labels)) == ["BENIGN", "DoS Hulk", "PortScan"]
+
+
+def test_normalize_labels_collapses_padding_and_runs_of_whitespace() -> None:
+    labels = pd.Series(["  BENIGN ", "DoS\t Hulk"])
+
+    assert list(normalize_labels(labels)) == ["BENIGN", "DoS Hulk"]
+
+
+def test_normalize_labels_is_idempotent() -> None:
+    labels = pd.Series(["Web Attack � XSS", " BENIGN "])
+
+    once = normalize_labels(labels)
+
+    pd.testing.assert_series_equal(normalize_labels(once), once)
+
+
+def test_prepare_dataset_returns_normalized_labels(
+    sample_df: pd.DataFrame, config: dict[str, Any]
+) -> None:
+    """The repair belongs to the pipeline, so nothing downstream repeats it."""
+    dirty = sample_df.copy()
+    attack_rows = dirty[LABEL_COLUMN] != BENIGN_LABEL
+    dirty.loc[attack_rows, LABEL_COLUMN] = "Web Attack � XSS"
+
+    prepared = prepare_dataset(dirty, config)
+
+    assert not any("�" in label for label in prepared.y_test)
+    assert "Web Attack - XSS" in set(prepared.y_test)
 
 
 # --- required_columns ------------------------------------------------------

@@ -26,6 +26,13 @@ from sklearn.preprocessing import StandardScaler
 DEFAULT_TEST_SIZE = 0.3
 DEFAULT_RANDOM_STATE = 42
 
+# CICIDS2017 writes its web-attack labels with an en dash encoded in cp1252
+# (byte 0x96): "Web Attack - Brute Force". Copies of the dataset transcoded to
+# UTF-8 without declaring that source encoding turn the byte into U+FFFD, so
+# the label arrives as "Web Attack � Brute Force" and renders as a black
+# diamond in any report built from it.
+_REPLACEMENT_CHARACTER = "�"
+
 
 class FeaturesConfig(BaseModel):
     """`features` section of config.yaml: which columns feed the models."""
@@ -134,6 +141,30 @@ def load_config(config_path: str | Path) -> dict[str, Any]:
     with path.open("r", encoding="utf-8") as f:
         config: dict[str, Any] = yaml.safe_load(f)
     return config
+
+
+def normalize_labels(labels: pd.Series) -> pd.Series:
+    """Repair the encoding damage in CICIDS2017's ground-truth labels.
+
+    Restores the separator mangled into U+FFFD (see `_REPLACEMENT_CHARACTER`)
+    to a plain ASCII hyphen, then collapses runs of whitespace and trims the
+    ends -- the same files also ship labels with stray padding.
+
+    ASCII rather than the original en dash on purpose: the label travels into
+    Markdown reports and, eventually, `AnomalyReport` payloads, and a
+    round-trippable character cannot be mangled a second time by whatever
+    reads them next.
+
+    Applied at the one point labels enter the pipeline, so nothing downstream
+    has to know the dataset has this quirk. Idempotent: already-clean labels
+    (`"BENIGN"`, `"DoS Hulk"`) pass through untouched.
+    """
+    return (
+        labels.astype(str)
+        .str.replace(_REPLACEMENT_CHARACTER, "-", regex=False)
+        .str.replace(r"\s+", " ", regex=True)
+        .str.strip()
+    )
 
 
 def required_columns(config: Config) -> list[str]:
@@ -336,9 +367,10 @@ def prepare_dataset(df: pd.DataFrame, config: dict[str, Any] | Config) -> Prepar
         5. Transform both train and test feature matrices with that scaler.
 
     Note:
-        `y_test` holds the raw string labels (e.g. "BENIGN", "DoS Hulk"); the
-        evaluation stage must binarize it against `benign_label` before
-        computing precision/recall/ROC-AUC.
+        `y_test` holds the string labels (e.g. "BENIGN", "DoS Hulk"), passed
+        through `normalize_labels` so downstream code never has to cope with
+        the dataset's encoding damage; the evaluation stage must binarize it
+        against `benign_label` before computing precision/recall/ROC-AUC.
 
     Args:
         df: Full flow DataFrame (e.g. from `src.data.loader.load_flows`).
@@ -375,7 +407,7 @@ def prepare_dataset(df: pd.DataFrame, config: dict[str, Any] | Config) -> Prepar
 
     x_train = scaler.transform(train_features.to_numpy())
     x_test = scaler.transform(test_features.to_numpy())
-    y_test = split.test_df[label_column].reset_index(drop=True)
+    y_test = normalize_labels(split.test_df[label_column]).reset_index(drop=True)
 
     return PreparedData(
         x_train=x_train,

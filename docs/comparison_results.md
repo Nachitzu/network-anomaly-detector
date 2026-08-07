@@ -9,7 +9,7 @@
 - **Training set (benign only):** 1,589,924 flows x 17 features
 - **Test set (mixed, labeled):** 1,237,952 flows (681,396 benign / 556,556 attack, 44.96% attack)
 - **Labels:** used at evaluation time only; both models were fitted on benign traffic with no labels.
-- **Total wall clock (fit + evaluate, both models):** 64.2s on CPU.
+- **Total wall clock (fit + evaluate, both models):** 62.9s on CPU.
 
 ## Side-by-side metrics
 
@@ -19,8 +19,8 @@
 | recall | 0.304735 | 0.450632 |
 | f1 | 0.446112 | 0.596273 |
 | roc_auc | 0.716326 | 0.787438 |
-| training_time_seconds | 6.78092 | 51.9697 |
-| inference_latency_ms_per_sample | 0.00157638 | 0.000180915 |
+| training_time_seconds | 6.60708 | 50.9555 |
+| inference_latency_ms_per_sample | 0.00152423 | 0.000246961 |
 
 `autoencoder` wins on both F1 and ROC-AUC -- the latter being the threshold-independent measure of how well each model separates attack from benign traffic.
 
@@ -39,13 +39,13 @@ Aggregate recall hides a large spread: high-volume floods are caught far more re
 | DoS Slowhttptest | 0.1891 |
 | DDoS | 0.1823 |
 | DoS GoldenEye | 0.1289 |
-| Web Attack � Brute Force | 0.0478 |
-| Web Attack � XSS | 0.0245 |
+| Web Attack - Brute Force | 0.0478 |
+| Web Attack - XSS | 0.0245 |
 | Bot | 0.0225 |
 | PortScan | 0.0009 |
 | FTP-Patator | 0.0000 |
 | SSH-Patator | 0.0000 |
-| Web Attack � Sql Injection | 0.0000 |
+| Web Attack - Sql Injection | 0.0000 |
 
 ### autoencoder
 
@@ -58,13 +58,13 @@ Aggregate recall hides a large spread: high-volume floods are caught far more re
 | DDoS | 0.6360 |
 | DoS slowloris | 0.6008 |
 | DoS GoldenEye | 0.4888 |
-| Web Attack � Brute Force | 0.0491 |
-| Web Attack � XSS | 0.0276 |
+| Web Attack - Brute Force | 0.0491 |
+| Web Attack - XSS | 0.0276 |
 | Bot | 0.0225 |
 | PortScan | 0.0022 |
 | SSH-Patator | 0.0003 |
 | FTP-Patator | 0.0003 |
-| Web Attack � Sql Injection | 0.0000 |
+| Web Attack - Sql Injection | 0.0000 |
 
 ## Example explanations
 

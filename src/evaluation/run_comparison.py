@@ -296,7 +296,8 @@ def run(config_path: Path, raw_dir: Path | None, output_path: Path) -> pd.DataFr
     print(f"  train {prepared.x_train.shape}  test {prepared.x_test.shape}", flush=True)
 
     benign_label = config.features.benign_label
-    y_test = prepared.y_test.astype(str).str.strip()
+    # Already normalized by `prepare_dataset`; no cleanup belongs here.
+    y_test = prepared.y_test
     detectors = build_detectors(config)
 
     print("Fitting and evaluating both detectors ...", flush=True)
