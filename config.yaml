@@ -77,7 +77,12 @@ models:
     hidden_dims: [32, 16, 8]
     epochs: 50
     learning_rate: 0.001
-    batch_size: 8
+    # Sized for the FULL CICIDS2017 benign training set (~1.27M rows after the
+    # validation split), not for the 24-row test fixture. Measured on CPU:
+    # batch_size 8 -> ~159k steps/epoch at ~82 steps/s = ~27 h for 50 epochs;
+    # batch_size 1024 -> ~1.2k steps/epoch at ~1300 steps/s = ~50 s. Tests
+    # override this with fixture-scale values, so keep the real-run default here.
+    batch_size: 1024
     # Percentile of held-out BENIGN validation reconstruction error used as
     # the anomaly threshold. Never computed from attack data.
     threshold_percentile: 95.0
