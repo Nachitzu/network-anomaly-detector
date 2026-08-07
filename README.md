@@ -7,7 +7,7 @@
 ![Status](https://img.shields.io/badge/status-in%20development-orange)
 
 **Status:** In development — Phase 1 (data & feature engineering pipeline) complete.
-**Author:** Ignacio Núñez — AI Security Engineer (Blue Team + ML for Security).
+**Author:** Nachitzu — AI Security Engineer (Blue Team + ML for Security).
 **Companion project:** [ai-soc-triage-agent](https://github.com/Nachitzu/ai-soc-triage-agent) — standalone for now, designed for future integration.
 
 ---
