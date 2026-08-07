@@ -66,6 +66,11 @@ class IsolationForestConfig(BaseModel):
     # rather than deep inside IsolationForest.fit().
     contamination: float = Field(default=0.1, gt=0, le=0.5)
     max_samples: int | float | str = "auto"
+    # Percentile of BENIGN training scores (score(X_benign) at fit time) used
+    # as the anomaly threshold -- mirrors the Autoencoder's benign-percentile
+    # approach (README section 5.3) and keeps the detector unsupervised: NEVER
+    # computed from attack data or labels.
+    threshold_percentile: float = Field(default=95.0, gt=0, lt=100)
     random_state: int = DEFAULT_RANDOM_STATE
 
 

@@ -161,13 +161,10 @@ class AutoencoderDetector(BaseDetector):
 
         return np.asarray(errors, dtype=np.float64)
 
-    def is_anomaly(self, X: np.ndarray) -> np.ndarray:
-        """Convenience helper: `score(X) > threshold`, element-wise.
-
-        Raises:
-            RuntimeError: if called before `fit`.
-        """
-        return self.score(X) > self.threshold
+    # `is_anomaly` is intentionally NOT overridden here: `BaseDetector.is_anomaly`
+    # already implements `score(X) > threshold` concretely, and reusing it
+    # keeps exactly one shared decision rule across both detectors (README
+    # section 5.1/5.5) instead of per-model duplication.
 
     @property
     def threshold(self) -> float:

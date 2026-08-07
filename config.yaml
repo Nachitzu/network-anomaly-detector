@@ -64,6 +64,10 @@ models:
     # CICIDS2017-style traffic; not derived from labels at training time.
     contamination: 0.1
     max_samples: auto
+    # Percentile of BENIGN training scores used as the anomaly threshold
+    # (mirrors the Autoencoder's threshold_percentile). Never computed from
+    # attack data.
+    threshold_percentile: 95.0
     random_state: 42
 
   autoencoder:
