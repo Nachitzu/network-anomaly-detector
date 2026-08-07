@@ -7,7 +7,7 @@ write the final side-by-side metrics table plus a written conclusion to
 
 Everything reusable lives in `src/` (README section 4): this module only
 orchestrates already-tested public APIs -- `load_flows`, `prepare_dataset`,
-`compare_models`, `render_comparison_table`, `explain_flagged_anomalies` --
+`evaluate_models`, `render_comparison_table`, `explain_flagged_anomalies` --
 and adds no detection or metric logic of its own.
 
 Run it with the full dataset present under `data/raw/`:
@@ -34,7 +34,7 @@ from src.data.feature_engineering import (
     required_columns,
 )
 from src.data.loader import load_flows
-from src.evaluation.compare_models import compare_models, render_comparison_table
+from src.evaluation.compare_models import evaluate_models, render_comparison_table
 from src.evaluation.explainability import explain_flagged_anomalies
 from src.models.autoencoder_model import AutoencoderDetector
 from src.models.base_detector import BaseDetector
@@ -256,18 +256,18 @@ def _build_report(
     table_markdown: str,
     prepared: PreparedData,
     detectors: list[BaseDetector],
+    flags_by_detector: dict[str, np.ndarray],
     y_test: pd.Series,
     benign_label: str,
     elapsed_seconds: float,
 ) -> str:
-    """Compose the full `comparison_results.md` document."""
-    # Decide once per detector, then reuse: the per-attack breakdown and the
-    # metrics table are two views of the same decisions, not a reason to score
-    # a million-row test set twice more.
-    flags_by_detector = {
-        detector.name: detector.is_anomaly(prepared.x_test) for detector in detectors
-    }
+    """Compose the full `comparison_results.md` document.
 
+    `flags_by_detector` comes from `evaluate_models`, which computed it as a
+    byproduct of scoring `x_test` for the metrics in `comparison` -- reusing
+    it here (for the per-attack breakdown) means those decisions are never
+    scored a second time over a potentially million-row test set.
+    """
     sections = _run_context_section(prepared, y_test, benign_label, elapsed_seconds)
     sections += _metrics_section(comparison, table_markdown)
     sections += _per_attack_section(flags_by_detector, y_test, benign_label)
@@ -302,7 +302,7 @@ def run(config_path: Path, raw_dir: Path | None, output_path: Path) -> pd.DataFr
 
     print("Fitting and evaluating both detectors ...", flush=True)
     started = time.perf_counter()
-    comparison = compare_models(
+    comparison, flags_by_detector = evaluate_models(
         detectors, prepared.x_train, prepared.x_test, y_test, benign_label=benign_label
     )
     elapsed_seconds = time.perf_counter() - started
@@ -315,6 +315,7 @@ def run(config_path: Path, raw_dir: Path | None, output_path: Path) -> pd.DataFr
         table_markdown,
         prepared,
         detectors,
+        flags_by_detector,
         y_test,
         benign_label,
         elapsed_seconds,

@@ -86,8 +86,13 @@ def _evaluate_one(
     x_test: np.ndarray,
     y_true_binary: np.ndarray,
     min_latency_samples: int,
-) -> dict[str, float]:
-    """Fit, time, and score a single detector; compute its full metric set."""
+) -> tuple[dict[str, float], np.ndarray]:
+    """Fit, time, and score a single detector; compute its full metric set.
+
+    Also returns the boolean `is_anomaly(x_test)` decisions used to compute
+    precision/recall/F1, so a caller that needs them too (`evaluate_models`)
+    doesn't have to score `x_test` a second time to get them.
+    """
     start = time.perf_counter()
     detector.fit(x_train)
     training_time_seconds = time.perf_counter() - start
@@ -97,11 +102,11 @@ def _evaluate_one(
     # the detector's own decision rule). `is_anomaly(x_test)` would score this
     # same matrix a second time -- costly at real-dataset scale.
     scores = detector.score(x_test)
-    predictions = detector.is_anomaly_from_scores(scores).astype(int)
+    predictions = detector.is_anomaly_from_scores(scores)
 
-    precision = precision_score(y_true_binary, predictions, zero_division=0)
-    recall = recall_score(y_true_binary, predictions, zero_division=0)
-    f1 = f1_score(y_true_binary, predictions, zero_division=0)
+    precision = precision_score(y_true_binary, predictions.astype(int), zero_division=0)
+    recall = recall_score(y_true_binary, predictions.astype(int), zero_division=0)
+    f1 = f1_score(y_true_binary, predictions.astype(int), zero_division=0)
     # ROC-AUC is undefined with a single ground-truth class; guard rather
     # than let sklearn raise, since a labeled test set is expected to (and,
     # per the split strategy, always does) contain both benign and attack
@@ -114,7 +119,7 @@ def _evaluate_one(
 
     latency_ms = _measure_inference_latency_ms(detector, x_test, min_latency_samples)
 
-    return {
+    metrics = {
         "precision": float(precision),
         "recall": float(recall),
         "f1": float(f1),
@@ -122,6 +127,69 @@ def _evaluate_one(
         "training_time_seconds": training_time_seconds,
         "inference_latency_ms_per_sample": latency_ms,
     }
+    return metrics, predictions
+
+
+def evaluate_models(
+    detectors: Sequence[BaseDetector],
+    x_train: np.ndarray,
+    x_test: np.ndarray,
+    y_test: pd.Series,
+    benign_label: str,
+    min_latency_samples: int = DEFAULT_MIN_LATENCY_SAMPLES,
+) -> tuple[pd.DataFrame, dict[str, np.ndarray]]:
+    """Fit, evaluate, and compare each detector, exposing its `x_test` decisions too.
+
+    Does exactly the fit/score work `compare_models` does (and is what it
+    calls internally), but also returns each detector's boolean
+    `is_anomaly(x_test)` decisions -- already computed by `_evaluate_one` for
+    precision/recall/F1 -- for callers that need both the comparison table
+    and the underlying decisions (e.g. `run_comparison._build_report`'s
+    per-attack-type breakdown) without scoring `x_test` again at
+    real-dataset scale.
+
+    Args:
+        detectors: Two (or more) fitted-or-unfitted `BaseDetector` instances,
+            each with a distinct `.name`. `fit` is (re-)called on each here so
+            training time can be measured consistently for all detectors.
+        x_train: Benign-only training feature matrix, already scaled upstream
+            by the shared feature-engineering pipeline (same features/scaling
+            used to build every detector in `detectors`).
+        x_test: Mixed (benign + attack) test feature matrix.
+        y_test: Raw ground-truth string labels aligned with `x_test`'s rows
+            (e.g. `"BENIGN"`, `"DoS Hulk"`). Used ONLY here, for evaluation.
+        benign_label: The exact label value identifying normal traffic.
+        min_latency_samples: Minimum batch size for the latency measurement.
+
+    Returns:
+        A `(comparison, flags_by_detector)` pair. `comparison` is exactly
+        what `compare_models` returns: one row per metric (`METRIC_NAMES`),
+        one column per detector, named after `detector.name`.
+        `flags_by_detector` maps each detector's `.name` to its boolean
+        `is_anomaly(x_test)` decisions, aligned with `x_test`'s rows.
+
+    Raises:
+        ValueError: if two or more `detectors` share the same `.name` --
+            silently overwriting one model's results in the comparison table
+            would otherwise go unnoticed.
+    """
+    names = [detector.name for detector in detectors]
+    if len(set(names)) != len(names):
+        raise ValueError(f"detectors must have distinct .name values, got: {names}")
+
+    y_true_binary = _binarize_labels(y_test, benign_label)
+
+    metrics_by_detector: dict[str, dict[str, float]] = {}
+    flags_by_detector: dict[str, np.ndarray] = {}
+    for detector in detectors:
+        metrics, flags = _evaluate_one(
+            detector, x_train, x_test, y_true_binary, min_latency_samples
+        )
+        metrics_by_detector[detector.name] = metrics
+        flags_by_detector[detector.name] = flags
+
+    comparison = pd.DataFrame(metrics_by_detector).reindex(METRIC_NAMES)
+    return comparison, flags_by_detector
 
 
 def compare_models(
@@ -140,6 +208,9 @@ def compare_models(
     threshold), ROC-AUC (threshold-independent, from raw `score`), and mean
     inference latency (ms/sample, over a batch of at least
     `min_latency_samples` rows).
+
+    A thin wrapper around `evaluate_models` that drops the per-detector
+    decisions; use `evaluate_models` directly when those are needed too.
 
     Args:
         detectors: Two (or more) fitted-or-unfitted `BaseDetector` instances,
@@ -164,18 +235,10 @@ def compare_models(
             silently overwriting one model's results in the comparison table
             would otherwise go unnoticed.
     """
-    names = [detector.name for detector in detectors]
-    if len(set(names)) != len(names):
-        raise ValueError(f"detectors must have distinct .name values, got: {names}")
-
-    y_true_binary = _binarize_labels(y_test, benign_label)
-
-    results = {
-        detector.name: _evaluate_one(detector, x_train, x_test, y_true_binary, min_latency_samples)
-        for detector in detectors
-    }
-
-    return pd.DataFrame(results).reindex(METRIC_NAMES)
+    comparison, _ = evaluate_models(
+        detectors, x_train, x_test, y_test, benign_label, min_latency_samples
+    )
+    return comparison
 
 
 def _dataframe_to_markdown(comparison: pd.DataFrame) -> str:

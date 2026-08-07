@@ -48,6 +48,30 @@ FEATURE_COLUMNS = [
 BENIGN_LABEL = "BENIGN"
 
 
+class _CountingDetector(BaseDetector):
+    """Fake `BaseDetector` that counts `.score()` calls, for regression coverage."""
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self.score_calls = 0
+
+    def fit(self, X_benign: np.ndarray) -> None:
+        return None
+
+    def score(self, X: np.ndarray) -> np.ndarray:
+        self.score_calls += 1
+        return np.linspace(0.0, 1.0, X.shape[0])
+
+    @property
+    def threshold(self) -> float:
+        return 0.5
+
+    def top_contributing_features(
+        self, x: np.ndarray, feature_names: list[str], k: int = 5
+    ) -> list[str]:  # pragma: no cover - not exercised by the scoring-count guard
+        return feature_names[:k]
+
+
 @pytest.fixture()
 def config_dict() -> dict[str, Any]:
     """A fixture-scale config: same shape as config.yaml, tiny hyperparameters."""
@@ -190,6 +214,26 @@ def test_run_writes_only_to_the_requested_path(config_path: Path, tmp_path: Path
 
     assert output.exists()
     assert output.parent.name == "nested"
+
+
+def test_run_does_not_rescore_the_test_set_for_the_report(
+    config_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression guard: `_build_report` used to call `detector.is_anomaly(x_test)`
+    again for the per-attack-type breakdown, re-scoring a matrix `evaluate_models`
+    had already scored for the metrics -- a full extra pass at real-dataset scale.
+    It must now reuse the decisions `evaluate_models` already computed.
+    """
+    detectors = [_CountingDetector("isolation_forest"), _CountingDetector("autoencoder")]
+    monkeypatch.setattr("src.evaluation.run_comparison.build_detectors", lambda config: detectors)
+
+    run(config_path, raw_dir=FIXTURES_DIR, output_path=tmp_path / "out.md")
+
+    # One pass for the metrics/ROC-AUC, one for the latency measurement, and
+    # one for the example-explanations preview -- no extra pass for the
+    # per-attack-type breakdown.
+    for detector in detectors:
+        assert detector.score_calls == 3
 
 
 # --- main(): command-line entry point --------------------------------------

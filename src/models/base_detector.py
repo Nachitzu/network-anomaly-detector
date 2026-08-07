@@ -11,6 +11,8 @@ from abc import ABC, abstractmethod
 
 import numpy as np
 
+from src.models.feature_ranking import as_explanation_matrix
+
 
 class BaseDetector(ABC):
     """Common contract for unsupervised network anomaly detectors.
@@ -98,4 +100,5 @@ class BaseDetector(ABC):
             RuntimeError: if called before `fit`.
             ValueError: if `k` is not positive, or `X` holds non-finite values.
         """
-        return [self.top_contributing_features(row, feature_names, k=k) for row in np.asarray(X)]
+        matrix = as_explanation_matrix(X, k)
+        return [self.top_contributing_features(row, feature_names, k=k) for row in matrix]
