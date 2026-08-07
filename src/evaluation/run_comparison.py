@@ -31,6 +31,7 @@ from src.data.feature_engineering import (
     PreparedData,
     load_config,
     prepare_dataset,
+    required_columns,
 )
 from src.data.loader import load_flows
 from src.evaluation.compare_models import compare_models, render_comparison_table
@@ -43,11 +44,12 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG_PATH = REPO_ROOT / "config.yaml"
 DEFAULT_OUTPUT_PATH = REPO_ROOT / "docs" / "comparison_results.md"
 
-# `explain_flagged_anomalies` calls `top_contributing_features` once per flagged
-# row in a Python-level loop, which is far too slow for the ~250k rows a full
-# run flags. The written report only needs an illustrative sample, so explain
-# just this many test rows.
-EXPLAIN_SAMPLE_ROWS = 2000
+# How many test rows to scan for the report's illustrative explanations.
+# Explaining them is vectorized and cheap, but the returned dict holds one
+# Python list per flagged row -- on a full run that would be hundreds of
+# thousands of objects to print five of. This is a bound on the size of the
+# result, not a workaround for slow explanation.
+EXPLAIN_PREVIEW_ROWS = 50_000
 
 
 def build_detectors(config: Config) -> list[BaseDetector]:
@@ -63,23 +65,37 @@ def build_detectors(config: Config) -> list[BaseDetector]:
 
 
 def load_prepared_dataset(config_dict: dict[str, Any], raw_dir: Path) -> PreparedData:
-    """Load every CSV under `raw_dir` and run the Phase 1 pipeline over it."""
+    """Load every CSV under `raw_dir` and run the Phase 1 pipeline over it.
+
+    Only the columns the pipeline actually consumes are read (see
+    `required_columns`): on the full CICIDS2017 that is 18 of 79, which is the
+    difference between a multi-gigabyte peak and a comfortable one.
+    """
+    config = Config.model_validate(config_dict)
     data_section = config_dict.get("data", {})
     csv_glob = data_section.get("csv_glob", "*.csv") if isinstance(data_section, dict) else "*.csv"
-    flows = load_flows(raw_dir, str(csv_glob))
+    flows = load_flows(raw_dir, str(csv_glob), columns=required_columns(config))
     return prepare_dataset(flows, config_dict)
 
 
 def recall_by_attack_type(
-    detector: BaseDetector, x_test: np.ndarray, y_test: pd.Series, benign_label: str
+    flagged: np.ndarray, y_test: pd.Series, benign_label: str
 ) -> pd.Series:
-    """Per-attack-type detection rate (recall) for one fitted detector.
+    """Per-attack-type detection rate (recall) from already-computed decisions.
 
     Aggregate recall hides that a percentile threshold catches high-volume
     floods far more readily than low-and-slow attacks, so break it out by the
     raw ground-truth label. Labels are used here for evaluation only.
+
+    Takes the decisions rather than a detector on purpose: this is pure
+    aggregation, and asking for a detector would mean scoring the test set yet
+    again, on top of the passes `compare_models` has already made.
+
+    Args:
+        flagged: Boolean decision per row of the test set.
+        y_test: Raw ground-truth labels aligned with `flagged`.
+        benign_label: The label value identifying normal traffic.
     """
-    flagged = detector.is_anomaly(x_test)
     attack_mask = np.asarray(y_test != benign_label)
     return (
         pd.DataFrame({"label": y_test[attack_mask], "flagged": flagged[attack_mask]})
@@ -164,12 +180,11 @@ def _metrics_section(comparison: pd.DataFrame, table_markdown: str) -> list[str]
 
 
 def _per_attack_section(
-    detectors: list[BaseDetector],
-    x_test: np.ndarray,
+    flags_by_detector: dict[str, np.ndarray],
     y_test: pd.Series,
     benign_label: str,
 ) -> list[str]:
-    """Per-attack-type recall for each detector."""
+    """Per-attack-type recall for each detector, from decisions made once."""
     sections = [
         "## Detection rate by attack type",
         "",
@@ -179,10 +194,10 @@ def _per_attack_section(
         ),
         "",
     ]
-    for detector in detectors:
-        per_type = recall_by_attack_type(detector, x_test, y_test, benign_label)
+    for name, flagged in flags_by_detector.items():
+        per_type = recall_by_attack_type(flagged, y_test, benign_label)
         sections += [
-            f"### {detector.name}",
+            f"### {name}",
             "",
             _series_to_markdown(per_type, "attack type", "recall").rstrip(),
             "",
@@ -194,13 +209,13 @@ def _explanations_section(
     detectors: list[BaseDetector], x_test: np.ndarray, feature_names: list[str]
 ) -> list[str]:
     """A short, illustrative sample of per-anomaly explanations."""
-    sample_x = x_test[:EXPLAIN_SAMPLE_ROWS]
+    sample_x = x_test[:EXPLAIN_PREVIEW_ROWS]
     sections = [
         "## Example explanations",
         "",
         (
             "Top contributing features for the first flagged flows within the first"
-            f" {EXPLAIN_SAMPLE_ROWS:,} test rows, via the shared"
+            f" {EXPLAIN_PREVIEW_ROWS:,} test rows, via the shared"
             " `top_contributing_features` interface."
         ),
         "",
@@ -246,9 +261,16 @@ def _build_report(
     elapsed_seconds: float,
 ) -> str:
     """Compose the full `comparison_results.md` document."""
+    # Decide once per detector, then reuse: the per-attack breakdown and the
+    # metrics table are two views of the same decisions, not a reason to score
+    # a million-row test set twice more.
+    flags_by_detector = {
+        detector.name: detector.is_anomaly(prepared.x_test) for detector in detectors
+    }
+
     sections = _run_context_section(prepared, y_test, benign_label, elapsed_seconds)
     sections += _metrics_section(comparison, table_markdown)
-    sections += _per_attack_section(detectors, prepared.x_test, y_test, benign_label)
+    sections += _per_attack_section(flags_by_detector, y_test, benign_label)
     sections += _explanations_section(detectors, prepared.x_test, prepared.feature_names)
     sections += _interpretation_section()
     return "\n".join(sections)

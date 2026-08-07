@@ -9,7 +9,7 @@
 - **Training set (benign only):** 1,589,924 flows x 17 features
 - **Test set (mixed, labeled):** 1,237,952 flows (681,396 benign / 556,556 attack, 44.96% attack)
 - **Labels:** used at evaluation time only; both models were fitted on benign traffic with no labels.
-- **Total wall clock (fit + evaluate, both models):** 67.3s on CPU.
+- **Total wall clock (fit + evaluate, both models):** 64.2s on CPU.
 
 ## Side-by-side metrics
 
@@ -19,8 +19,8 @@
 | recall | 0.304735 | 0.450632 |
 | f1 | 0.446112 | 0.596273 |
 | roc_auc | 0.716326 | 0.787438 |
-| training_time_seconds | 6.65247 | 53.4079 |
-| inference_latency_ms_per_sample | 0.00152159 | 0.000150842 |
+| training_time_seconds | 6.78092 | 51.9697 |
+| inference_latency_ms_per_sample | 0.00157638 | 0.000180915 |
 
 `autoencoder` wins on both F1 and ROC-AUC -- the latter being the threshold-independent measure of how well each model separates attack from benign traffic.
 
@@ -68,7 +68,7 @@ Aggregate recall hides a large spread: high-volume floods are caught far more re
 
 ## Example explanations
 
-Top contributing features for the first flagged flows within the first 2,000 test rows, via the shared `top_contributing_features` interface.
+Top contributing features for the first flagged flows within the first 50,000 test rows, via the shared `top_contributing_features` interface.
 
 ### isolation_forest
 

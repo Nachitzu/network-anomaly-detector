@@ -25,6 +25,7 @@ from src.data.feature_engineering import (
     fit_scaler,
     load_config,
     prepare_dataset,
+    required_columns,
     sanitize_flows,
     select_feature_matrix,
     split_benign_and_mixed,
@@ -211,6 +212,48 @@ def test_sanitize_flows_keeps_clean_data_unchanged(sample_df: pd.DataFrame) -> N
 def test_sanitize_flows_raises_for_unknown_strategy(sample_df: pd.DataFrame) -> None:
     with pytest.raises(ValueError, match="Unknown cleaning strategy"):
         sanitize_flows(sample_df, FEATURE_COLUMNS, strategy="impute")
+
+
+def test_sanitize_flows_does_not_mutate_input(sample_df: pd.DataFrame) -> None:
+    """Guards the caller's frame: dropping rows must never touch the original.
+
+    Pinned explicitly because the implementation trades a whole-frame `.copy()`
+    for a boolean mask -- cheap on 79 columns x 2.8M rows, but only safe if
+    non-mutation is enforced rather than assumed.
+    """
+    dirty = sample_df.copy()
+    dirty.loc[0, "Flow Bytes/s"] = np.inf
+    before = dirty.copy()
+
+    sanitize_flows(dirty, FEATURE_COLUMNS)
+
+    pd.testing.assert_frame_equal(dirty, before)
+
+
+# --- required_columns ------------------------------------------------------
+
+
+def test_required_columns_is_numeric_columns_plus_label(config: dict[str, Any]) -> None:
+    cfg = Config.model_validate(config)
+
+    assert required_columns(cfg) == [*FEATURE_COLUMNS, LABEL_COLUMN]
+
+
+def test_required_columns_deduplicates_preserving_order() -> None:
+    """A config that repeats the label among the features still yields a clean
+    whitelist; reporting that mistake stays `select_feature_matrix`'s job.
+    """
+    cfg = Config.model_validate(
+        {
+            "features": {
+                "numeric_columns": ["Flow Duration", "Label", "Flow Duration"],
+                "label_column": "Label",
+                "benign_label": "BENIGN",
+            }
+        }
+    )
+
+    assert required_columns(cfg) == ["Flow Duration", "Label"]
 
 
 def test_prepare_dataset_drops_non_finite_rows_before_scaling(

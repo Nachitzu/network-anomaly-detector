@@ -48,36 +48,6 @@ FEATURE_COLUMNS = [
 BENIGN_LABEL = "BENIGN"
 
 
-class _StubDetector(BaseDetector):
-    """A detector whose decisions are fixed up front.
-
-    `recall_by_attack_type` is pure aggregation logic, so it is tested against
-    a deterministic stub rather than a real model: that keeps these assertions
-    about the grouping itself instead of some real detector's separability on
-    a handful of synthetic rows.
-    """
-
-    name = "stub"
-
-    def __init__(self, flags: np.ndarray) -> None:
-        self._flags = flags
-
-    def fit(self, X_benign: np.ndarray) -> None:  # pragma: no cover - not used here
-        return None
-
-    def score(self, X: np.ndarray) -> np.ndarray:
-        return self._flags.astype(np.float64)
-
-    @property
-    def threshold(self) -> float:
-        return 0.5
-
-    def top_contributing_features(
-        self, x: np.ndarray, feature_names: list[str], k: int = 5
-    ) -> list[str]:  # pragma: no cover - not used here
-        return feature_names[:k]
-
-
 @pytest.fixture()
 def config_dict() -> dict[str, Any]:
     """A fixture-scale config: same shape as config.yaml, tiny hyperparameters."""
@@ -142,11 +112,9 @@ def test_recall_by_attack_type_excludes_benign_and_scores_each_label() -> None:
     affect recall), one of two `DoS Hulk` rows is caught, and `PortScan` is
     missed entirely.
     """
-    x_test = np.zeros((4, 1))
     y_test = pd.Series([BENIGN_LABEL, "DoS Hulk", "DoS Hulk", "PortScan"])
-    detector = _StubDetector(np.array([1, 1, 0, 0]))
 
-    per_type = recall_by_attack_type(detector, x_test, y_test, BENIGN_LABEL)
+    per_type = recall_by_attack_type(np.array([1, 1, 0, 0]), y_test, BENIGN_LABEL)
 
     assert set(per_type.index) == {"DoS Hulk", "PortScan"}
     assert per_type["DoS Hulk"] == pytest.approx(0.5)
@@ -154,21 +122,17 @@ def test_recall_by_attack_type_excludes_benign_and_scores_each_label() -> None:
 
 
 def test_recall_by_attack_type_is_one_when_every_attack_row_is_flagged() -> None:
-    x_test = np.zeros((2, 1))
     y_test = pd.Series(["DoS Hulk", "DoS Hulk"])
-    detector = _StubDetector(np.array([1, 1]))
 
-    per_type = recall_by_attack_type(detector, x_test, y_test, BENIGN_LABEL)
+    per_type = recall_by_attack_type(np.array([1, 1]), y_test, BENIGN_LABEL)
 
     assert per_type["DoS Hulk"] == pytest.approx(1.0)
 
 
 def test_recall_by_attack_type_sorts_best_detected_attack_first() -> None:
-    x_test = np.zeros((4, 1))
     y_test = pd.Series(["PortScan", "PortScan", "DoS Hulk", "DoS Hulk"])
-    detector = _StubDetector(np.array([0, 0, 1, 1]))
 
-    per_type = recall_by_attack_type(detector, x_test, y_test, BENIGN_LABEL)
+    per_type = recall_by_attack_type(np.array([0, 0, 1, 1]), y_test, BENIGN_LABEL)
 
     assert list(per_type.index) == ["DoS Hulk", "PortScan"]
 

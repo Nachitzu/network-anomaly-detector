@@ -136,6 +136,22 @@ def load_config(config_path: str | Path) -> dict[str, Any]:
     return config
 
 
+def required_columns(config: Config) -> list[str]:
+    """The only raw CSV columns this pipeline ever reads.
+
+    That is the numeric feature set plus the label column -- 18 of CICIDS2017's
+    79. Lives here, next to `Config`, because `src.data.loader` is deliberately
+    generic and must not know what a "feature" is; callers pass the result to
+    `load_flows(..., columns=...)` so the other 61 are never materialized.
+
+    Duplicates are removed while preserving first-seen order, so a config that
+    (incorrectly) repeats the label among the features still yields a clean
+    whitelist -- `select_feature_matrix` remains the place where that mistake
+    is actually reported.
+    """
+    return list(dict.fromkeys([*config.features.numeric_columns, config.features.label_column]))
+
+
 def sanitize_flows(
     df: pd.DataFrame,
     feature_columns: list[str],
@@ -165,10 +181,13 @@ def sanitize_flows(
         raise ValueError(f"Unknown cleaning strategy '{strategy}'; expected 'drop'")
 
     present = [col for col in feature_columns if col in df.columns]
-    cleaned = df.copy()
-    cleaned[present] = cleaned[present].replace([np.inf, -np.inf], np.nan)
-    cleaned = cleaned.dropna(subset=present)
-    return cleaned.reset_index(drop=True)
+    # Build the keep-mask from the feature columns alone instead of copying the
+    # whole frame to clean it in place: `df.copy()` duplicates every column,
+    # including the ones nothing here looks at. `.loc[mask]` already returns a
+    # new frame, so the input is still never mutated (pinned by
+    # `test_sanitize_flows_does_not_mutate_input`).
+    finite_rows = df[present].replace([np.inf, -np.inf], np.nan).notna().all(axis=1)
+    return df.loc[finite_rows].reset_index(drop=True)
 
 
 @dataclass(frozen=True)

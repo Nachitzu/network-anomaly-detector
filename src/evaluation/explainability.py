@@ -1,10 +1,14 @@
 """Per-anomaly explainability: top-N contributing features for flagged rows.
 
 Depends ONLY on the `BaseDetector` interface (`is_anomaly`,
-`top_contributing_features`) -- works identically for `IsolationForestDetector`
-(z-score deviation) and `AutoencoderDetector` (per-feature reconstruction
-error) without ever branching on which model produced the detector (README
-section 5.1/5.5).
+`top_contributing_features_batch`) -- works identically for
+`IsolationForestDetector` (z-score deviation) and `AutoencoderDetector`
+(per-feature reconstruction error) without ever branching on which model
+produced the detector (README section 5.1/5.5).
+
+Explanations are requested for every flagged row in one call, so the cost is
+one vectorized operation rather than one per anomaly. That matters: a full
+CICIDS2017 run flags hundreds of thousands of flows.
 """
 from __future__ import annotations
 
@@ -38,8 +42,9 @@ def explain_flagged_anomalies(
         RuntimeError: if `detector` has not been fitted yet (propagated from
             `is_anomaly`/`top_contributing_features`).
     """
-    flagged = detector.is_anomaly(X)
+    flagged_indices = np.flatnonzero(detector.is_anomaly(X))
+    explanations = detector.top_contributing_features_batch(X[flagged_indices], feature_names, k=k)
     return {
-        int(row_index): detector.top_contributing_features(X[row_index], feature_names, k=k)
-        for row_index in np.flatnonzero(flagged)
+        int(row_index): names
+        for row_index, names in zip(flagged_indices, explanations, strict=True)
     }

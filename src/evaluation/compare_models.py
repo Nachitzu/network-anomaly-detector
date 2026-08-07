@@ -92,8 +92,12 @@ def _evaluate_one(
     detector.fit(x_train)
     training_time_seconds = time.perf_counter() - start
 
+    # One scoring pass, reused for both the threshold-free metric (ROC-AUC,
+    # from the raw scores) and the thresholded ones (precision/recall/F1, via
+    # the detector's own decision rule). `is_anomaly(x_test)` would score this
+    # same matrix a second time -- costly at real-dataset scale.
     scores = detector.score(x_test)
-    predictions = detector.is_anomaly(x_test).astype(int)
+    predictions = detector.is_anomaly_from_scores(scores).astype(int)
 
     precision = precision_score(y_true_binary, predictions, zero_division=0)
     recall = recall_score(y_true_binary, predictions, zero_division=0)

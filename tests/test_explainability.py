@@ -193,3 +193,49 @@ def test_explain_flagged_anomalies_raises_before_fit() -> None:
         explain_flagged_anomalies(
             detector, np.zeros((2, len(FEATURE_COLUMNS))), FEATURE_COLUMNS, k=3
         )
+
+
+class _SpyDetector(BaseDetector):
+    """Records which explainability entry point gets used."""
+
+    name = "spy"
+
+    def __init__(self) -> None:
+        self.batch_calls = 0
+        self.per_row_calls = 0
+
+    def fit(self, X_benign: np.ndarray) -> None:
+        return None
+
+    def score(self, X: np.ndarray) -> np.ndarray:
+        return np.ones(X.shape[0])
+
+    @property
+    def threshold(self) -> float:
+        return 0.5
+
+    def top_contributing_features(
+        self, x: np.ndarray, feature_names: list[str], k: int = 5
+    ) -> list[str]:
+        self.per_row_calls += 1
+        return feature_names[:k]
+
+    def top_contributing_features_batch(
+        self, X: np.ndarray, feature_names: list[str], k: int = 5
+    ) -> list[list[str]]:
+        self.batch_calls += 1
+        return [feature_names[:k] for _ in range(X.shape[0])]
+
+
+def test_explain_flagged_anomalies_asks_for_every_row_at_once() -> None:
+    """Regression guard: explanations used to be a Python loop over flagged
+    rows, one call each -- unusable on the ~250k a full run flags.
+    """
+    detector = _SpyDetector()
+    X = np.zeros((25, len(FEATURE_COLUMNS)))
+
+    explanations = explain_flagged_anomalies(detector, X, FEATURE_COLUMNS, k=3)
+
+    assert len(explanations) == 25  # every row scores above the threshold
+    assert detector.batch_calls == 1
+    assert detector.per_row_calls == 0

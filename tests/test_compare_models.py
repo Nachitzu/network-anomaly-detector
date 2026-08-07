@@ -270,6 +270,57 @@ def test_compare_models_rejects_duplicate_detector_names(prepared: PreparedData)
         )
 
 
+class _CountingDetector(BaseDetector):
+    """Counts how many times the test matrix gets scored.
+
+    A real detector cannot be used for this: `IsolationForestDetector.fit`
+    calls `self.score` internally to derive its threshold, which would
+    contaminate the count.
+    """
+
+    name = "counting"
+
+    def __init__(self) -> None:
+        self.score_calls = 0
+
+    def fit(self, X_benign: np.ndarray) -> None:
+        return None
+
+    def score(self, X: np.ndarray) -> np.ndarray:
+        self.score_calls += 1
+        return np.linspace(0.0, 1.0, X.shape[0])
+
+    @property
+    def threshold(self) -> float:
+        return 0.5
+
+    def top_contributing_features(
+        self, x: np.ndarray, feature_names: list[str], k: int = 5
+    ) -> list[str]:  # pragma: no cover - not exercised by compare_models
+        return feature_names[:k]
+
+
+def test_compare_models_scores_the_test_set_only_twice(prepared: PreparedData) -> None:
+    """Regression guard: one pass for the metrics, one for the latency timing.
+
+    `_evaluate_one` used to score `x_test` three times -- once for the raw
+    scores, once again inside `is_anomaly`, and once more for the latency
+    measurement. The middle pass is pure waste at real-dataset scale.
+    """
+    detector = _CountingDetector()
+
+    compare_models(
+        [detector],
+        prepared.x_train,
+        prepared.x_test,
+        prepared.y_test,
+        benign_label=BENIGN_LABEL,
+        min_latency_samples=_TEST_MIN_LATENCY_SAMPLES,
+    )
+
+    assert detector.score_calls == 2
+
+
 # --- interface-only: no model-specific imports/branching -------------------
 
 
