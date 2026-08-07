@@ -10,6 +10,8 @@
 **Author:** Nachitzu — AI Security Engineer (Blue Team + ML for Security).
 **Companion project:** [ai-soc-triage-agent](https://github.com/Nachitzu/ai-soc-triage-agent) — standalone for now, designed for future integration.
 
+**Versión en español:** [README.es.md](README.es.md)
+
 ---
 
 ## 1. Problem statement
