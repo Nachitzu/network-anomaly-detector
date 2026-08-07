@@ -26,6 +26,13 @@ from sklearn.preprocessing import StandardScaler
 DEFAULT_TEST_SIZE = 0.3
 DEFAULT_RANDOM_STATE = 42
 
+# CICIDS2017 writes its web-attack labels with an en dash encoded in cp1252
+# (byte 0x96): "Web Attack - Brute Force". Copies of the dataset transcoded to
+# UTF-8 without declaring that source encoding turn the byte into U+FFFD, so
+# the label arrives as "Web Attack � Brute Force" and renders as a black
+# diamond in any report built from it.
+_REPLACEMENT_CHARACTER = "�"
+
 
 class FeaturesConfig(BaseModel):
     """`features` section of config.yaml: which columns feed the models."""
@@ -66,6 +73,11 @@ class IsolationForestConfig(BaseModel):
     # rather than deep inside IsolationForest.fit().
     contamination: float = Field(default=0.1, gt=0, le=0.5)
     max_samples: int | float | str = "auto"
+    # Percentile of BENIGN training scores (score(X_benign) at fit time) used
+    # as the anomaly threshold -- mirrors the Autoencoder's benign-percentile
+    # approach (README section 5.3) and keeps the detector unsupervised: NEVER
+    # computed from attack data or labels.
+    threshold_percentile: float = Field(default=95.0, gt=0, lt=100)
     random_state: int = DEFAULT_RANDOM_STATE
 
 
@@ -131,6 +143,46 @@ def load_config(config_path: str | Path) -> dict[str, Any]:
     return config
 
 
+def normalize_labels(labels: pd.Series) -> pd.Series:
+    """Repair the encoding damage in CICIDS2017's ground-truth labels.
+
+    Restores the separator mangled into U+FFFD (see `_REPLACEMENT_CHARACTER`)
+    to a plain ASCII hyphen, then collapses runs of whitespace and trims the
+    ends -- the same files also ship labels with stray padding.
+
+    ASCII rather than the original en dash on purpose: the label travels into
+    Markdown reports and, eventually, `AnomalyReport` payloads, and a
+    round-trippable character cannot be mangled a second time by whatever
+    reads them next.
+
+    Applied at the one point labels enter the pipeline, so nothing downstream
+    has to know the dataset has this quirk. Idempotent: already-clean labels
+    (`"BENIGN"`, `"DoS Hulk"`) pass through untouched.
+    """
+    return (
+        labels.astype(str)
+        .str.replace(_REPLACEMENT_CHARACTER, "-", regex=False)
+        .str.replace(r"\s+", " ", regex=True)
+        .str.strip()
+    )
+
+
+def required_columns(config: Config) -> list[str]:
+    """The only raw CSV columns this pipeline ever reads.
+
+    That is the numeric feature set plus the label column -- 18 of CICIDS2017's
+    79. Lives here, next to `Config`, because `src.data.loader` is deliberately
+    generic and must not know what a "feature" is; callers pass the result to
+    `load_flows(..., columns=...)` so the other 61 are never materialized.
+
+    Duplicates are removed while preserving first-seen order, so a config that
+    (incorrectly) repeats the label among the features still yields a clean
+    whitelist -- `select_feature_matrix` remains the place where that mistake
+    is actually reported.
+    """
+    return list(dict.fromkeys([*config.features.numeric_columns, config.features.label_column]))
+
+
 def sanitize_flows(
     df: pd.DataFrame,
     feature_columns: list[str],
@@ -160,10 +212,13 @@ def sanitize_flows(
         raise ValueError(f"Unknown cleaning strategy '{strategy}'; expected 'drop'")
 
     present = [col for col in feature_columns if col in df.columns]
-    cleaned = df.copy()
-    cleaned[present] = cleaned[present].replace([np.inf, -np.inf], np.nan)
-    cleaned = cleaned.dropna(subset=present)
-    return cleaned.reset_index(drop=True)
+    # Build the keep-mask from the feature columns alone instead of copying the
+    # whole frame to clean it in place: `df.copy()` duplicates every column,
+    # including the ones nothing here looks at. `.loc[mask]` already returns a
+    # new frame, so the input is still never mutated (pinned by
+    # `test_sanitize_flows_does_not_mutate_input`).
+    finite_rows = df[present].replace([np.inf, -np.inf], np.nan).notna().all(axis=1)
+    return df.loc[finite_rows].reset_index(drop=True)
 
 
 @dataclass(frozen=True)
@@ -312,9 +367,10 @@ def prepare_dataset(df: pd.DataFrame, config: dict[str, Any] | Config) -> Prepar
         5. Transform both train and test feature matrices with that scaler.
 
     Note:
-        `y_test` holds the raw string labels (e.g. "BENIGN", "DoS Hulk"); the
-        evaluation stage must binarize it against `benign_label` before
-        computing precision/recall/ROC-AUC.
+        `y_test` holds the string labels (e.g. "BENIGN", "DoS Hulk"), passed
+        through `normalize_labels` so downstream code never has to cope with
+        the dataset's encoding damage; the evaluation stage must binarize it
+        against `benign_label` before computing precision/recall/ROC-AUC.
 
     Args:
         df: Full flow DataFrame (e.g. from `src.data.loader.load_flows`).
@@ -351,7 +407,7 @@ def prepare_dataset(df: pd.DataFrame, config: dict[str, Any] | Config) -> Prepar
 
     x_train = scaler.transform(train_features.to_numpy())
     x_test = scaler.transform(test_features.to_numpy())
-    y_test = split.test_df[label_column].reset_index(drop=True)
+    y_test = normalize_labels(split.test_df[label_column]).reset_index(drop=True)
 
     return PreparedData(
         x_train=x_train,

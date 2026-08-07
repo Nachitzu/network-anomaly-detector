@@ -23,6 +23,7 @@ from torch import nn
 
 from src.data.feature_engineering import AutoencoderConfig
 from src.models.base_detector import BaseDetector
+from src.models.feature_ranking import as_explanation_matrix, rank_top_features
 
 
 class _FeedforwardAutoencoder(nn.Module):
@@ -161,13 +162,10 @@ class AutoencoderDetector(BaseDetector):
 
         return np.asarray(errors, dtype=np.float64)
 
-    def is_anomaly(self, X: np.ndarray) -> np.ndarray:
-        """Convenience helper: `score(X) > threshold`, element-wise.
-
-        Raises:
-            RuntimeError: if called before `fit`.
-        """
-        return self.score(X) > self.threshold
+    # `is_anomaly` is intentionally NOT overridden here: `BaseDetector.is_anomaly`
+    # already implements `score(X) > threshold` concretely, and reusing it
+    # keeps exactly one shared decision rule across both detectors (README
+    # section 5.1/5.5) instead of per-model duplication.
 
     @property
     def threshold(self) -> float:
@@ -198,24 +196,51 @@ class AutoencoderDetector(BaseDetector):
             RuntimeError: if called before `fit`.
             ValueError: if `k` is not positive or `x` contains non-finite values.
         """
+        return self.top_contributing_features_batch(
+            np.asarray(x, dtype=float).reshape(1, -1), feature_names, k=k
+        )[0]
+
+    def top_contributing_features_batch(
+        self, X: np.ndarray, feature_names: list[str], k: int = 5
+    ) -> list[list[str]]:
+        """Vectorized `top_contributing_features` over a whole matrix.
+
+        One forward pass reconstructs every row at once, exactly as `score`
+        already does -- the per-feature squared error is just the term `score`
+        discards before averaging. Reconstructing a row at a time instead meant
+        one batch-of-1 forward pass per flagged flow, which is what made
+        explaining a full run impractical. It also means the errors explaining
+        a flag now come from the same kernel as the score that raised it.
+
+        The dtype chain is deliberately preserved from the single-row version:
+        float64 input, float32 reconstruction, subtraction promoting back to
+        float64. Doing the arithmetic in torch instead would silently change
+        the numbers.
+
+        Args:
+            X: One flow per row (shape `(n, n_features)`).
+            feature_names: Names aligned with `X`'s columns.
+            k: Number of top feature names per row.
+
+        Returns:
+            One list of `min(k, len(feature_names))` names per row of `X`.
+
+        Raises:
+            RuntimeError: if called before `fit`.
+            ValueError: if `k` is not positive or `X` contains non-finite values.
+        """
         if self._model is None:
             raise RuntimeError(
                 "AutoencoderDetector.fit() must be called before top_contributing_features()"
             )
-        if k <= 0:
-            raise ValueError(f"k must be positive, got {k}")
 
-        x_flat = np.asarray(x, dtype=float).reshape(-1)
-        if not np.all(np.isfinite(x_flat)):
-            raise ValueError("x must contain only finite values")
+        matrix = as_explanation_matrix(X, k)
 
-        x_tensor = torch.tensor(x_flat, dtype=torch.float32).unsqueeze(0)
+        x_tensor = torch.tensor(matrix, dtype=torch.float32)
         self._model.eval()
         with torch.no_grad():
-            reconstruction = self._model(x_tensor).squeeze(0).numpy()
+            reconstruction = self._model(x_tensor).numpy()
 
-        squared_errors = (x_flat - reconstruction) ** 2
+        squared_errors = (matrix - reconstruction) ** 2
 
-        top_k = min(k, len(feature_names))
-        ranked_indices = np.argsort(-squared_errors)[:top_k]
-        return [feature_names[i] for i in ranked_indices]
+        return rank_top_features(squared_errors, feature_names, k)

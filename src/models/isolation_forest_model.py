@@ -12,6 +12,7 @@ from sklearn.ensemble import IsolationForest
 
 from src.data.feature_engineering import IsolationForestConfig
 from src.models.base_detector import BaseDetector
+from src.models.feature_ranking import as_explanation_matrix, rank_top_features
 
 # Guards per-feature z-score division against zero-variance training features
 # (e.g. a flag column that is constant across all benign training rows).
@@ -40,16 +41,26 @@ class IsolationForestDetector(BaseDetector):
         )
         self._train_mean: np.ndarray | None = None
         self._train_std: np.ndarray | None = None
+        self._threshold: float | None = None
 
     def fit(self, X_benign: np.ndarray) -> None:
         """Train the forest using ONLY benign traffic. No labels involved.
 
         Also stores the per-feature training mean/std, needed later by
-        `top_contributing_features` for z-score-based explainability.
+        `top_contributing_features` for z-score-based explainability, and
+        derives `self._threshold` as the configured percentile of this same
+        benign training data's own scores -- mirroring the Autoencoder's
+        benign-percentile threshold (README section 5.3) while staying
+        unsupervised: the threshold is NEVER computed from attack data.
         """
         self._estimator.fit(X_benign)
         self._train_mean = X_benign.mean(axis=0)
         self._train_std = X_benign.std(axis=0)
+
+        benign_scores = self.score(X_benign)
+        self._threshold = float(
+            np.percentile(benign_scores, self._config.threshold_percentile)
+        )
 
     def score(self, X: np.ndarray) -> np.ndarray:
         """Return an anomaly score per row. Higher = more anomalous.
@@ -58,8 +69,27 @@ class IsolationForestDetector(BaseDetector):
         (inlier) points and LOWER (more negative) values for anomalies, so the
         sign is flipped here to match the project-wide convention shared with
         the Autoencoder (README section 5.2).
+
+        Raises:
+            RuntimeError: if called before `fit` (checked explicitly here,
+                rather than relying on sklearn's own `NotFittedError`, so the
+                `BaseDetector` contract raises the same exception type across
+                every detector).
         """
+        if self._train_mean is None:
+            raise RuntimeError("IsolationForestDetector.fit() must be called before score()")
         return np.asarray(-self._estimator.decision_function(X), dtype=np.float64)
+
+    @property
+    def threshold(self) -> float:
+        """The fitted anomaly threshold (percentile of benign training scores).
+
+        Raises:
+            RuntimeError: if accessed before `fit`.
+        """
+        if self._threshold is None:
+            raise RuntimeError("IsolationForestDetector.fit() must be called before threshold")
+        return self._threshold
 
     def top_contributing_features(
         self, x: np.ndarray, feature_names: list[str], k: int = 5
@@ -80,18 +110,39 @@ class IsolationForestDetector(BaseDetector):
             RuntimeError: if called before `fit`.
             ValueError: if `k` is not positive or `x` contains non-finite values.
         """
+        return self.top_contributing_features_batch(
+            np.asarray(x, dtype=float).reshape(1, -1), feature_names, k=k
+        )[0]
+
+    def top_contributing_features_batch(
+        self, X: np.ndarray, feature_names: list[str], k: int = 5
+    ) -> list[list[str]]:
+        """Vectorized `top_contributing_features` over a whole matrix.
+
+        The z-score is a pure element-wise expression against two per-feature
+        vectors, so it broadcasts over `(n, n_features)` unchanged -- one
+        expression for any number of rows, instead of one Python call each.
+        `top_contributing_features` routes through here with `n = 1`, so there
+        is a single implementation and the two can never disagree.
+
+        Args:
+            X: One flow per row (shape `(n, n_features)`).
+            feature_names: Names aligned with `X`'s columns.
+            k: Number of top feature names per row.
+
+        Returns:
+            One list of `min(k, len(feature_names))` names per row of `X`.
+
+        Raises:
+            RuntimeError: if called before `fit`.
+            ValueError: if `k` is not positive or `X` contains non-finite values.
+        """
         if self._train_mean is None or self._train_std is None:
             raise RuntimeError("IsolationForestDetector.fit() must be called before "
                                 "top_contributing_features()")
-        if k <= 0:
-            raise ValueError(f"k must be positive, got {k}")
 
-        x_flat = np.asarray(x, dtype=float).reshape(-1)
-        if not np.all(np.isfinite(x_flat)):
-            raise ValueError("x must contain only finite values")
+        matrix = as_explanation_matrix(X, k)
         safe_std = np.where(self._train_std == 0, _ZERO_VARIANCE_EPSILON, self._train_std)
-        z_scores = np.abs((x_flat - self._train_mean) / safe_std)
+        z_scores = np.abs((matrix - self._train_mean) / safe_std)
 
-        top_k = min(k, len(feature_names))
-        ranked_indices = np.argsort(-z_scores)[:top_k]
-        return [feature_names[i] for i in ranked_indices]
+        return rank_top_features(z_scores, feature_names, k)

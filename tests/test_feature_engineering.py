@@ -24,7 +24,9 @@ from src.data.feature_engineering import (
     PreparedData,
     fit_scaler,
     load_config,
+    normalize_labels,
     prepare_dataset,
+    required_columns,
     sanitize_flows,
     select_feature_matrix,
     split_benign_and_mixed,
@@ -211,6 +213,101 @@ def test_sanitize_flows_keeps_clean_data_unchanged(sample_df: pd.DataFrame) -> N
 def test_sanitize_flows_raises_for_unknown_strategy(sample_df: pd.DataFrame) -> None:
     with pytest.raises(ValueError, match="Unknown cleaning strategy"):
         sanitize_flows(sample_df, FEATURE_COLUMNS, strategy="impute")
+
+
+def test_sanitize_flows_does_not_mutate_input(sample_df: pd.DataFrame) -> None:
+    """Guards the caller's frame: dropping rows must never touch the original.
+
+    Pinned explicitly because the implementation trades a whole-frame `.copy()`
+    for a boolean mask -- cheap on 79 columns x 2.8M rows, but only safe if
+    non-mutation is enforced rather than assumed.
+    """
+    dirty = sample_df.copy()
+    dirty.loc[0, "Flow Bytes/s"] = np.inf
+    before = dirty.copy()
+
+    sanitize_flows(dirty, FEATURE_COLUMNS)
+
+    pd.testing.assert_frame_equal(dirty, before)
+
+
+# --- normalize_labels ------------------------------------------------------
+
+
+def test_normalize_labels_repairs_the_mangled_web_attack_separator() -> None:
+    """CICIDS2017's cp1252 en dash arrives as U+FFFD in UTF-8 copies."""
+    labels = pd.Series(
+        ["Web Attack � Brute Force", "Web Attack � XSS", "Web Attack � Sql Injection"]
+    )
+
+    normalized = normalize_labels(labels)
+
+    assert list(normalized) == [
+        "Web Attack - Brute Force",
+        "Web Attack - XSS",
+        "Web Attack - Sql Injection",
+    ]
+    assert not any("�" in label for label in normalized)
+
+
+def test_normalize_labels_leaves_clean_labels_untouched() -> None:
+    labels = pd.Series(["BENIGN", "DoS Hulk", "PortScan"])
+
+    assert list(normalize_labels(labels)) == ["BENIGN", "DoS Hulk", "PortScan"]
+
+
+def test_normalize_labels_collapses_padding_and_runs_of_whitespace() -> None:
+    labels = pd.Series(["  BENIGN ", "DoS\t Hulk"])
+
+    assert list(normalize_labels(labels)) == ["BENIGN", "DoS Hulk"]
+
+
+def test_normalize_labels_is_idempotent() -> None:
+    labels = pd.Series(["Web Attack � XSS", " BENIGN "])
+
+    once = normalize_labels(labels)
+
+    pd.testing.assert_series_equal(normalize_labels(once), once)
+
+
+def test_prepare_dataset_returns_normalized_labels(
+    sample_df: pd.DataFrame, config: dict[str, Any]
+) -> None:
+    """The repair belongs to the pipeline, so nothing downstream repeats it."""
+    dirty = sample_df.copy()
+    attack_rows = dirty[LABEL_COLUMN] != BENIGN_LABEL
+    dirty.loc[attack_rows, LABEL_COLUMN] = "Web Attack � XSS"
+
+    prepared = prepare_dataset(dirty, config)
+
+    assert not any("�" in label for label in prepared.y_test)
+    assert "Web Attack - XSS" in set(prepared.y_test)
+
+
+# --- required_columns ------------------------------------------------------
+
+
+def test_required_columns_is_numeric_columns_plus_label(config: dict[str, Any]) -> None:
+    cfg = Config.model_validate(config)
+
+    assert required_columns(cfg) == [*FEATURE_COLUMNS, LABEL_COLUMN]
+
+
+def test_required_columns_deduplicates_preserving_order() -> None:
+    """A config that repeats the label among the features still yields a clean
+    whitelist; reporting that mistake stays `select_feature_matrix`'s job.
+    """
+    cfg = Config.model_validate(
+        {
+            "features": {
+                "numeric_columns": ["Flow Duration", "Label", "Flow Duration"],
+                "label_column": "Label",
+                "benign_label": "BENIGN",
+            }
+        }
+    )
+
+    assert required_columns(cfg) == ["Flow Duration", "Label"]
 
 
 def test_prepare_dataset_drops_non_finite_rows_before_scaling(
